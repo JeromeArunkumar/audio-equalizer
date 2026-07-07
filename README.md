@@ -20,42 +20,46 @@ This project uses the third approach: Equalizer APO handles all kernel-level Biq
 
 ## Architecture Diagram
 
-```mermaid
-flowchart TD
-    A["🎛️  JUCE Desktop GUI\n────────────────\nC++20 / JUCE 8\nRotary Slider × 3\n600 × 250 px window"]
-    B["⚡  C++ Lambda Callback\n────────────────\nonValueChange fires\non every knob move"]
-    C["📄  juce_eq.txt\n────────────────\nC:\\Program Files\\\nEqualizerAPO\\config\\\njuce_eq.txt"]
-    D["⚙️  Equalizer APO Service\n────────────────\nWindows Audio\nProcessing Object\n(kernel pipeline)"]
-    E["🔊  System Audio Output\n────────────────\nAll applications:\nSpotify · YouTube\nSystem sounds · Games"]
-
-    A -->|"User drags knob"| B
-    B -->|"std::ofstream\n(full overwrite)"| C
-    C -->|"Include: juce_eq.txt\npolled each block ~10 ms"| D
-    D -->|"Biquad IIR filters\napplied to PCM stream"| E
-
-    style A fill:#1A2744,stroke:#4FC3F7,color:#4FC3F7
-    style B fill:#1A2744,stroke:#4FC3F7,color:#CCCCCC
-    style C fill:#2D2D2D,stroke:#888888,color:#AAAAAA
-    style D fill:#1A3A1A,stroke:#81C784,color:#81C784
-    style E fill:#2A1F00,stroke:#FFB74D,color:#FFB74D
 ```
-
-**Data flow summary:**
-
-```
-[JUCE Rotary Slider]
-        │  onValueChange lambda (C++20)
-        ▼
-[writeEqualizerConfig()]
-        │  std::ofstream — full overwrite, RAII close
-        ▼
-[C:\Program Files\EqualizerAPO\config\juce_eq.txt]
-        │  Equalizer APO "Include:" directive — polled every audio block
-        ▼
-[Equalizer APO Windows Audio Processing Object]
-        │  Second-order IIR Biquad filters applied in-kernel
-        ▼
-[Speakers / Headphones — all applications affected]
+  ┌─────────────────────────────────────────────────────┐
+  │               JUCE Desktop GUI  (User Space)        │
+  │                                                     │
+  │   ┌──────────┐  ┌──────────┐  ┌──────────┐        │
+  │   │  Bass    │  │   Mid    │  │  Treble  │        │
+  │   │ 200 Hz   │  │  1 kHz   │  │  4 kHz   │        │
+  │   │ Rotary   │  │ Rotary   │  │ Rotary   │        │
+  │   └────┬─────┘  └────┬─────┘  └────┬─────┘        │
+  │        └─────────────┴─────────────┘               │
+  │                      │  onValueChange lambda        │
+  │                      ▼                             │
+  │           writeEqualizerConfig()                   │
+  │           std::ofstream  (truncate + RAII close)   │
+  └──────────────────────┬──────────────────────────────┘
+                         │
+                         │  NTFS file write  (~0 ms)
+                         ▼
+         ┌───────────────────────────────┐
+         │  juce_eq.txt                  │
+         │                               │
+         │  Preamp: 0 dB                 │
+         │  Filter 1: ON LSC Fc 200 Hz   │
+         │  Filter 2: ON PK  Fc 1000 Hz  │
+         │  Filter 3: ON HSC Fc 4000 Hz  │
+         └───────────────┬───────────────┘
+                         │
+                         │  Include: juce_eq.txt
+                         │  polled every audio block (~10 ms)
+                         ▼
+  ┌─────────────────────────────────────────────────────┐
+  │          Equalizer APO  (Windows Audio Pipeline)    │
+  │                                                     │
+  │   Parse gain values  →  Compute Biquad coefficients │
+  │   Apply second-order IIR filters to PCM stream      │
+  └──────────────────────┬──────────────────────────────┘
+                         │
+                         ▼
+         Speakers / Headphones
+         (all apps: Spotify, YouTube, games, system sounds)
 ```
 
 ---
